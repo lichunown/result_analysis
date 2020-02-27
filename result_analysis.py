@@ -11,37 +11,36 @@ import warnings
 
 from functools import reduce
 
+
 class Result(np.ndarray):
     def __init__(self, *args, **kwargs):
         np.ndarray.__init__(*args, **kwargs)
     
-    @abc.abstractmethod
     @property
     def value(self):
         pass
     
-    @abc.abstractmethod
     @property
     def step(self):
         pass
 
 
-def set_result_info(step_dim, value_dim):
-    class TemplateResult(Result):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-        
-        @property
-        def value(self):
-            return self[:, value_dim]
-        
-        @property
-        def step(self):
-            return self[:, step_dim]
-    return TemplateResult
+def metaResult(step_dim, value_dim, name='TemplateResult'):
+    @property
+    def value(self):
+        return self[:, value_dim]
+    @property
+    def step(self):
+        return self[:, step_dim]
     
+    return type(name, (Result,), {'value':value, 'step':step})
 
-class ResultSet(object):
+
+TensorboardResult = metaResult(1, 2, 'TensorboardResult')
+NormalResult = metaResult(0, 1, 'NormalResult')
+
+
+class ResultSet(metaclass=abc.ABCMeta):
     def __init__(self, set_dir=None, split_list:list=None, split_key='_', match_warn='warn'):
         """
         if input is None, do nothing.
@@ -55,11 +54,13 @@ class ResultSet(object):
         self.split_key = split_key
         self.set_dir = set_dir
         self.data = {}
-        self.file_suffix = None
         
         if self.set_dir is not None:
             if split_list is None:
                 raise ValueError('split_list must be a list')
+            for split_value in split_list:
+                if split_key in split_value:
+                    raise KeyError('split_key can not in split_list, because it is ambiguous.')
             self._load_sets(set_dir, split_list, split_key, match_warn)
     
     @abc.abstractmethod
@@ -106,6 +107,12 @@ class ResultSet(object):
 
     def name_type(self, name):
         return dict(zip(self.split_list, self.split_name(name)))
+    
+    def apply(self, func):
+        r = []
+        for k, v in self.data.items():
+            r.append(func(v))
+        return r
     
     # set op
     def get(self, **kwargs):
@@ -256,22 +263,16 @@ class ResultSet(object):
     
     def __repr__(self):
         return f'ResultSet in {self.set_dir} with {len(self)} results:\n' + str(list(self.data.keys())).replace('\', ', '\',\n')
-        
-    
-    
-    
-#class BRACResultSet(ResultSet):
-#    def load_set(self, path):
-#        f = open(path, 'r')
-#        if f.readline() == 'Wall time,Step,Value\n':
-#            data = []
-#            for line in f:
-#                if line == '\n':
-#                    break
-#                wall_time, step, value = [float(i) for i in line.strip().split(',')]
-#                data.append((wall_time, step, value))
-#            return np.array(data).view(set_result_info(1, 2))
-#        
-        
-#test = BRACResultSet('./test_example', 
-#                 ['env', 'lambda_type', 'lambda', 'type', 'tag', 'seed'], split_key='+')   
+
+
+class TensorboardResultSet(ResultSet):
+    def load_set(self, path):
+        f = open(path, 'r')
+        if f.readline() == 'Wall time,Step,Value\n':
+            data = []
+            for line in f:
+                if line == '\n':
+                    break
+                wall_time, step, value = [float(i) for i in line.strip().split(',')]
+                data.append((wall_time, step, value))
+            return np.array(data).view(TensorboardResult)
